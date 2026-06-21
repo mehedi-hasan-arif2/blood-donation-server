@@ -3,8 +3,9 @@ const app = express();
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
-const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const bcrypt = require('bcryptjs');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
 const port = process.env.PORT || 5000;
 
@@ -27,6 +28,7 @@ async function run() {
   const donationRequestsCollection = db.collection("donationRequests");
   const fundingsCollection = db.collection("fundings");
 
+  
   app.post('/jwt', async (req, res) => {
     const token = jwt.sign(req.body, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
     res.send({ token });
@@ -40,55 +42,33 @@ async function run() {
     res.send(result);
   });
 
-  app.get('/users', verifyToken, verifyAdmin, async (req, res) => {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const users = await usersCollection.find().skip((page - 1) * limit).limit(limit).toArray();
-    const total = await usersCollection.countDocuments();
-    res.send({ users, total, page, totalPages: Math.ceil(total / limit) });
-  });
-
-  app.get('/donation-requests', async (req, res) => {
-    const { status, page = 1, limit = 10 } = req.query;
-    const query = status ? { status } : {};
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    const result = await donationRequestsCollection.find(query).skip(skip).limit(parseInt(limit)).toArray();
-    const total = await donationRequestsCollection.countDocuments(query);
-    res.send({ data: result, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });
-  });
-
-  app.post('/donation-requests', verifyToken, async (req, res) => {
-    const result = await donationRequestsCollection.insertOne({ ...req.body, status: 'pending', createdAt: new Date() });
-    res.send(result);
-  });
-
-  app.delete('/donation-requests/:id', verifyToken, async (req, res) => {
-    const result = await donationRequestsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-    res.send(result);
-  });
-
-  app.patch('/donation-requests/update/:id', verifyToken, async (req, res) => {
-    const result = await donationRequestsCollection.updateOne(
-      { _id: new ObjectId(req.params.id) },
-      { $set: { status: req.body.status } }
-    );
-    res.send(result);
-  });
-
-  /* ---  SEARCH DONORS --- */
-  app.get('/search-donors', async (req, res) => {
-    const result = await usersCollection.find({ ...req.query, status: 'active' }).toArray();
-    res.send(result);
-  });
-
-  /* --- ADMIN STATS DASHBOARD --- */
+  // (User, Request, Delete, Update, Search, Stats
   app.get('/admin-stats', verifyToken, verifyAdmin, async (req, res) => {
     const totalUsers = await usersCollection.estimatedDocumentCount();
     const totalRequests = await donationRequestsCollection.estimatedDocumentCount();
-    const totalFunding = await fundingsCollection.aggregate([
-      { $group: { _id: null, total: { $sum: "$amount" } } }
-    ]).toArray();
+    const totalFunding = await fundingsCollection.aggregate([{ $group: { _id: null, total: { $sum: "$amount" } } }]).toArray();
     res.send({ totalUsers, totalRequests, totalFunding: totalFunding[0]?.total || 0 });
+  });
+
+  /* ---  STRIPE PAYMENT AND FUNDING --- */
+  app.post('/create-payment-intent', verifyToken, async (req, res) => {
+    const { price } = req.body;
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: parseInt(price * 100),
+      currency: 'usd',
+      payment_method_types: ['card']
+    });
+    res.send({ clientSecret: paymentIntent.client_secret });
+  });
+
+  app.post('/fundings', verifyToken, async (req, res) => {
+    const result = await fundingsCollection.insertOne(req.body);
+    res.send(result);
+  });
+
+  app.get('/fundings', verifyToken, verifyAdmin, async (req, res) => {
+    const result = await fundingsCollection.find().toArray();
+    res.send(result);
   });
 
   await client.db("admin").command({ ping: 1 });
