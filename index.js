@@ -7,6 +7,8 @@ const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const bcrypt = require('bcryptjs');
 
 const port = process.env.PORT || 5000;
+
+// Middlewares
 const verifyToken = require('./middlewares/verifyToken');
 const verifyAdmin = require('./middlewares/verifyAdmin');
 const verifyVolunteer = require('./middlewares/verifyVolunteer');
@@ -14,7 +16,9 @@ const verifyVolunteer = require('./middlewares/verifyVolunteer');
 app.use(cors());
 app.use(express.json());
 
-const client = new MongoClient(process.env.MONGO_URI, { serverApi: { version: ServerApiVersion.v1 } });
+const client = new MongoClient(process.env.MONGO_URI, { 
+  serverApi: { version: ServerApiVersion.v1, strict: true, deprecationErrors: true } 
+});
 
 async function run() {
   await client.connect();
@@ -22,7 +26,7 @@ async function run() {
   const usersCollection = db.collection("users");
   const donationRequestsCollection = db.collection("donationRequests");
 
-  // Auth & Register
+  /* AUTH */
   app.post('/jwt', async (req, res) => {
     const token = jwt.sign(req.body, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
     res.send({ token });
@@ -36,29 +40,48 @@ async function run() {
     res.send(result);
   });
 
-  // User Mgmt & Middlewares
+  /* USERS - PAGINATION */
   app.get('/users', verifyToken, verifyAdmin, async (req, res) => {
-    const { page = 1, limit = 10 } = req.query;
-    const users = await usersCollection.find().skip((page - 1) * limit).limit(parseInt(limit)).toArray();
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const users = await usersCollection.find().skip((page - 1) * limit).limit(limit).toArray();
     const total = await usersCollection.countDocuments();
-    res.send({ users, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });
+    res.send({ users, total, page, totalPages: Math.ceil(total / limit) });
   });
 
-  // Donation Request Endpoints (Create & Get)
+  /* DONATION REQUESTS - FILTER + PAGINATION */
+  app.get('/donation-requests', async (req, res) => {
+    const { status, page = 1, limit = 10 } = req.query;
+    const query = status ? { status } : {};
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const result = await donationRequestsCollection.find(query).skip(skip).limit(parseInt(limit)).toArray();
+    const total = await donationRequestsCollection.countDocuments(query);
+    res.send({ data: result, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });
+  });
+
+  /* DONATION REQUEST CREATE */
   app.post('/donation-requests', verifyToken, async (req, res) => {
-    const user = await usersCollection.findOne({ email: req.decoded.email });
-    if (user?.status === 'blocked') return res.status(403).send({ message: 'User blocked' });
     const result = await donationRequestsCollection.insertOne({ ...req.body, status: 'pending', createdAt: new Date() });
     res.send(result);
   });
 
-  app.get('/donation-requests', async (req, res) => {
-    const { status, page = 1, limit = 10 } = req.query;
-    const query = status ? { status } : {};
-    const result = await donationRequestsCollection.find(query).skip((parseInt(page) - 1) * parseInt(limit)).limit(parseInt(limit)).toArray();
-    const total = await donationRequestsCollection.countDocuments(query);
-    res.send({ data: result, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });
+  /* DELETE */
+  app.delete('/donation-requests/:id', verifyToken, async (req, res) => {
+    const result = await donationRequestsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+    res.send(result);
   });
+
+  /* UPDATE STATUS */
+  app.patch('/donation-requests/update/:id', verifyToken, async (req, res) => {
+    const result = await donationRequestsCollection.updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: { status: req.body.status } }
+    );
+    res.send(result);
+  });
+
+  await client.db("admin").command({ ping: 1 });
+  console.log("MongoDB connected successfully!");
 }
 run();
 app.listen(port);
