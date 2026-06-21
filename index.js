@@ -25,8 +25,8 @@ async function run() {
   const db = client.db("bloodDonationDB");
   const usersCollection = db.collection("users");
   const donationRequestsCollection = db.collection("donationRequests");
+  const fundingsCollection = db.collection("fundings");
 
-  /* AUTH */
   app.post('/jwt', async (req, res) => {
     const token = jwt.sign(req.body, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
     res.send({ token });
@@ -40,7 +40,6 @@ async function run() {
     res.send(result);
   });
 
-  /* USERS - PAGINATION */
   app.get('/users', verifyToken, verifyAdmin, async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
@@ -49,7 +48,6 @@ async function run() {
     res.send({ users, total, page, totalPages: Math.ceil(total / limit) });
   });
 
-  /* DONATION REQUESTS - FILTER + PAGINATION */
   app.get('/donation-requests', async (req, res) => {
     const { status, page = 1, limit = 10 } = req.query;
     const query = status ? { status } : {};
@@ -59,25 +57,38 @@ async function run() {
     res.send({ data: result, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });
   });
 
-  /* DONATION REQUEST CREATE */
   app.post('/donation-requests', verifyToken, async (req, res) => {
     const result = await donationRequestsCollection.insertOne({ ...req.body, status: 'pending', createdAt: new Date() });
     res.send(result);
   });
 
-  /* DELETE */
   app.delete('/donation-requests/:id', verifyToken, async (req, res) => {
     const result = await donationRequestsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
     res.send(result);
   });
 
-  /* UPDATE STATUS */
   app.patch('/donation-requests/update/:id', verifyToken, async (req, res) => {
     const result = await donationRequestsCollection.updateOne(
       { _id: new ObjectId(req.params.id) },
       { $set: { status: req.body.status } }
     );
     res.send(result);
+  });
+
+  /* ---  SEARCH DONORS --- */
+  app.get('/search-donors', async (req, res) => {
+    const result = await usersCollection.find({ ...req.query, status: 'active' }).toArray();
+    res.send(result);
+  });
+
+  /* --- ADMIN STATS DASHBOARD --- */
+  app.get('/admin-stats', verifyToken, verifyAdmin, async (req, res) => {
+    const totalUsers = await usersCollection.estimatedDocumentCount();
+    const totalRequests = await donationRequestsCollection.estimatedDocumentCount();
+    const totalFunding = await fundingsCollection.aggregate([
+      { $group: { _id: null, total: { $sum: "$amount" } } }
+    ]).toArray();
+    res.send({ totalUsers, totalRequests, totalFunding: totalFunding[0]?.total || 0 });
   });
 
   await client.db("admin").command({ ping: 1 });
