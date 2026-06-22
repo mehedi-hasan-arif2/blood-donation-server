@@ -177,12 +177,34 @@ async function run() {
       res.send(result);
     });
 
-    /* UPDATE STATUS */
+    /* EDIT DONATION REQUEST */
+  app.patch('/donation-requests/edit/:id', verifyToken, async (req, res) => {
+    const result = await donationRequestsCollection.updateOne(
+    { _id: new ObjectId(req.params.id) },
+    {
+      $set: {
+        recipientName: req.body.recipientName,
+        recipientDistrict: req.body.recipientDistrict,
+        recipientUpazila: req.body.recipientUpazila,
+        hospitalName: req.body.hospitalName,
+        fullAddress: req.body.fullAddress,
+        bloodGroup: req.body.bloodGroup,
+        donationDate: req.body.donationDate,
+        donationTime: req.body.donationTime,
+        requestMessage: req.body.requestMessage
+      }
+    }
+  );
+
+    res.send(result);
+  });
+
+    /* UPDATE STATUS,DONOR INFO */
     app.patch('/donation-requests/update/:id', verifyToken, async (req, res) => {
-      const result = await donationRequestsCollection.updateOne(
-        { _id: new ObjectId(req.params.id) },
-        { $set: { status: req.body.status } }
-      );
+    const result = await donationRequestsCollection.updateOne(
+       { _id: new ObjectId(req.params.id) },
+       { $set: req.body }
+    );
 
       res.send(result);
     });
