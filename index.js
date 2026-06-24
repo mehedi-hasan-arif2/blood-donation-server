@@ -30,12 +30,6 @@ async function run() {
     const donationRequestsCollection = db.collection("donationRequests");
     const fundingsCollection = db.collection("fundings");
 
-    /* AUTH */
-    app.post('/jwt', async (req, res) => {
-      const token = jwt.sign(req.body, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
-      res.send({ token });
-    });
-
     /* REGISTER */
     app.post('/register', async (req, res) => {
       const existing = await usersCollection.findOne({ email: req.body.email });
@@ -54,7 +48,47 @@ async function run() {
       res.send(result);
     });
 
-    /* USERS - PAGINATION (Challenge Part) */
+    /* LOGIN */
+    app.post("/login", async (req, res) => {
+      const { email, password } = req.body;
+
+      const user = await usersCollection.findOne({ email });
+
+      if (!user) {
+        return res.status(401).send({ message: "User not found" });
+      }
+
+      if (user.status === "blocked") {
+        return res.status(403).send({ message: "User is blocked" });
+      }
+
+      const isPasswordValid = await bcrypt.compare(password, user.password);
+
+      if (!isPasswordValid) {
+        return res.status(401).send({ message: "Wrong password" });
+      }
+
+      const token = jwt.sign(
+        {
+          email: user.email,
+          role: user.role,
+        },
+        process.env.ACCESS_TOKEN_SECRET,
+        { expiresIn: "1h" }
+      );
+
+      res.send({
+        token,
+        user: {
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          status: user.status,
+        },
+      });
+    });
+
+    /* USERS - PAGINATION */
     app.get('/users', verifyToken, verifyAdmin, async (req, res) => {
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 10;
@@ -116,7 +150,7 @@ async function run() {
       res.send(result);
     });
 
-    /* DONATION REQUESTS (FILTER + PAGINATION Challenge) */
+    /* DONATION REQUESTS */
     app.get('/donation-requests', async (req, res) => {
       const { status, page = 1, limit = 10 } = req.query;
 
@@ -157,7 +191,7 @@ async function run() {
       res.send(result);
     });
 
-    /* (OPTIONAL Part) */
+    /* RECENT REQUESTS */
     app.get('/donation-requests/recent', verifyToken, async (req, res) => {
       const result = await donationRequestsCollection
         .find({ requesterEmail: req.decoded.email })
@@ -177,45 +211,49 @@ async function run() {
       res.send(result);
     });
 
-    /* EDIT DONATION REQUEST */
-  app.patch('/donation-requests/edit/:id', verifyToken, async (req, res) => {
-    const result = await donationRequestsCollection.updateOne(
-    { _id: new ObjectId(req.params.id) },
-    {
-      $set: {
-        recipientName: req.body.recipientName,
-        recipientDistrict: req.body.recipientDistrict,
-        recipientUpazila: req.body.recipientUpazila,
-        hospitalName: req.body.hospitalName,
-        fullAddress: req.body.fullAddress,
-        bloodGroup: req.body.bloodGroup,
-        donationDate: req.body.donationDate,
-        donationTime: req.body.donationTime,
-        requestMessage: req.body.requestMessage
-      }
-    }
-  );
-
-    res.send(result);
-  });
-
-    /* UPDATE STATUS,DONOR INFO */
-    app.patch('/donation-requests/update/:id', verifyToken, async (req, res) => {
-    const result = await donationRequestsCollection.updateOne(
-       { _id: new ObjectId(req.params.id) },
-       { $set: req.body }
-    );
+    /* EDIT REQUEST */
+    app.patch('/donation-requests/edit/:id', verifyToken, async (req, res) => {
+      const result = await donationRequestsCollection.updateOne(
+        { _id: new ObjectId(req.params.id) },
+        {
+          $set: {
+            recipientName: req.body.recipientName,
+            recipientDistrict: req.body.recipientDistrict,
+            recipientUpazila: req.body.recipientUpazila,
+            hospitalName: req.body.hospitalName,
+            fullAddress: req.body.fullAddress,
+            bloodGroup: req.body.bloodGroup,
+            donationDate: req.body.donationDate,
+            donationTime: req.body.donationTime,
+            requestMessage: req.body.requestMessage
+          }
+        }
+      );
 
       res.send(result);
     });
 
-    /* SEARCH */
-    app.get('/search-donors', async (req, res) => {
-      const result = await usersCollection.find({
-        ...req.query,
-        status: 'active'
-      }).toArray();
+    /* UPDATE STATUS */
+    app.patch('/donation-requests/update/:id', verifyToken, async (req, res) => {
+      const result = await donationRequestsCollection.updateOne(
+        { _id: new ObjectId(req.params.id) },
+        { $set: req.body }
+      );
 
+      res.send(result);
+    });
+
+    /* SEARCH DONORS (SAFE) */
+    app.get('/search-donors', async (req, res) => {
+      const { bloodGroup, district, upazila } = req.query;
+
+      const query = { status: 'active' };
+
+      if (bloodGroup) query.bloodGroup = bloodGroup;
+      if (district) query.district = district;
+      if (upazila) query.upazila = upazila;
+
+      const result = await usersCollection.find(query).toArray();
       res.send(result);
     });
 
@@ -235,10 +273,10 @@ async function run() {
       });
     });
 
-    /* FUNDING */
+    /* STRIPE */
     app.post('/create-payment-intent', verifyToken, async (req, res) => {
       const paymentIntent = await stripe.paymentIntents.create({
-        amount: parseInt(req.body.price * 100),
+        amount: Math.round(req.body.price * 100),
         currency: 'usd',
         payment_method_types: ['card']
       });
