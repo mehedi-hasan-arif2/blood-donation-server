@@ -110,6 +110,16 @@ async function run() {
       });
     });
 
+    /* GET USER ROLE */
+    app.get('/user/role/:email', verifyToken, async (req, res) => {
+      const email = req.params.email;
+      const user = await usersCollection.findOne({ email: email });
+      res.send({
+        role: user?.role,
+        status: user?.status,
+      });
+    });
+
     /* USERS UPDATE */
     app.patch('/users/update/:id', verifyToken, verifyAdmin, async (req, res) => {
       const result = await usersCollection.updateOne(
@@ -258,7 +268,7 @@ async function run() {
     });
 
     /* ADMIN STATS */
-    app.get('/admin-stats', verifyToken, verifyAdmin, async (req, res) => {
+    app.get('/admin-stats', verifyToken, verifyVolunteer, async (req, res) => {
       const totalUsers = await usersCollection.estimatedDocumentCount();
       const totalRequests = await donationRequestsCollection.estimatedDocumentCount();
 
@@ -289,7 +299,7 @@ async function run() {
       res.send(result);
     });
 
-    app.get('/fundings', verifyToken, verifyAdmin, async (req, res) => {
+    app.get('/fundings', verifyToken, async (req, res) => {
       const result = await fundingsCollection.find().toArray();
       res.send(result);
     });
